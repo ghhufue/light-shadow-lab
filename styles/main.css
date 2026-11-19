@@ -167,7 +167,8 @@ p {
   overflow: visible;
 }
 
-.stage svg .point-label {
+.stage svg .point-label,
+.stage svg .length-label {
   font: 750 20px system-ui,"Microsoft YaHei",sans-serif;
   paint-order: stroke;
   stroke: #f8fafc;
@@ -175,6 +176,11 @@ p {
   stroke-linejoin: round;
   text-anchor: middle;
   dominant-baseline: central;
+}
+
+.stage svg .length-label {
+  font-size: 25px;
+  font-variant-numeric: tabular-nums;
 }
 
 .stage svg .point-rod {
@@ -185,10 +191,15 @@ p {
   fill: #086754;
 }
 
-.stage svg .point-stem {
+.stage svg .point-stem,
+.stage svg .length-stem {
   fill: none;
   stroke-width: 1.05;
   opacity: .66;
+}
+
+.stage svg .length-stem {
+  stroke-width: 1.5;
 }
 
 .legend {

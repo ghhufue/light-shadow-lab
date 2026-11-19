@@ -34,35 +34,38 @@ const svgStage = (() => {
     return pending;
   }
 
-  function createLabel(parent, vertex, index, shadow) {
+  function createAnnotation(parent, type, shadow) {
     const stem = document.createElementNS(namespace, 'path');
-    stem.setAttribute('class', 'point-stem');
+    stem.setAttribute('class', `${type}-stem`);
     stem.setAttribute('stroke', shadow ? '#086754' : '#143f75');
     const text = document.createElementNS(namespace, 'text');
-    text.setAttribute('class', `point-label ${shadow ? 'point-shadow' : 'point-rod'}`);
-    text.textContent = String.fromCharCode(65 + index) + (shadow ? '′' : '');
+    text.setAttribute('class', `${type}-label ${shadow ? 'point-shadow' : 'point-rod'}`);
     parent.append(stem, text);
-    return { stem, text, vertex, shadow };
+    return { stem, text };
   }
 
-  function addLabels(svg) {
+  function createPointLabel(parent, vertex, index, shadow) {
+    const label = createAnnotation(parent, 'point', shadow);
+    label.text.textContent = String.fromCharCode(65 + index) + (shadow ? '′' : '');
+    return { ...label, vertex, shadow };
+  }
+
+  function addLabels(svg, showLengths) {
     const overlay = document.createElementNS(namespace, 'g');
     overlay.setAttribute('aria-hidden', 'true');
-    const labels = [
-      ...Array.from(svg.querySelectorAll('.vertex'), (vertex, index) => createLabel(overlay, vertex, index, false)),
-      ...Array.from(svg.querySelectorAll('.shadow-dot'), (vertex, index) => createLabel(overlay, vertex, index, true)),
+    const points = [
+      ...Array.from(svg.querySelectorAll('.vertex'), (vertex, index) => createPointLabel(overlay, vertex, index, false)),
+      ...Array.from(svg.querySelectorAll('.shadow-dot'), (vertex, index) => createPointLabel(overlay, vertex, index, true)),
     ];
-    if (labels.length) svg.append(overlay);
-    return labels;
+    const lengths = showLengths ? {
+      rod: createAnnotation(overlay, 'length', false),
+      shadow: createAnnotation(overlay, 'length', true),
+    } : null;
+    if (points.length) svg.append(overlay);
+    return { points, lengths };
   }
 
-  function drawLabels(bounds, labels) {
-    const circles = labels.map(({ vertex }) => {
-      const style = getComputedStyle(vertex);
-      return { x: parseFloat(style.cx), y: parseFloat(style.cy) };
-    });
-    if (!circles.every(point => Number.isFinite(point.x) && Number.isFinite(point.y))) return;
-
+  function drawPointLabels(bounds, labels, circles) {
     const occupied = [];
     for (const [index, label] of labels.entries()) {
       const { x, y } = circles[index];
@@ -88,6 +91,67 @@ const svgStage = (() => {
       const stemY = y + (yPos - y) * 0.58;
       label.stem.setAttribute('d', `M${x},${y}L${stemX},${stemY}`);
     }
+    return occupied;
+  }
+
+  function drawLengthLabels(bounds, labels, values, circles, occupied) {
+    const halfWidth = 43;
+    const halfHeight = 19;
+    const obstacles = [
+      ...circles.map(({ x, y }) => [x, y, 7, 7]),
+      ...occupied.map(([x, y]) => [x, y, 14, 16]),
+    ];
+    for (const [index, key] of ['rod', 'shadow'].entries()) {
+      const [first, second] = circles.slice(index * 2, index * 2 + 2);
+      const midX = (first.x + second.x) / 2;
+      const midY = (first.y + second.y) / 2;
+      const dx = second.x - first.x;
+      const dy = second.y - first.y;
+      const span = Math.hypot(dx, dy);
+      // Keep the shadow annotation below its midpoint even when the endpoints coincide.
+      const [normalX, normalY] = key === 'rod' && span > 0 ? [dy / span, -dx / span] : [0, 1];
+      const offset = Math.abs(normalX) * halfWidth + Math.abs(normalY) * halfHeight + 24;
+      const farther = offset + 34;
+      const candidates = [
+        [normalX * offset, normalY * offset],
+        [normalX * farther, normalY * farther],
+        [-normalX * offset, -normalY * offset],
+        [-normalX * farther, -normalY * farther],
+      ].map(([x, y]) => [
+        Math.max(bounds.x + halfWidth, Math.min(bounds.x + bounds.width - halfWidth, midX + x)),
+        Math.max(bounds.y + halfHeight, Math.min(bounds.y + bounds.height - halfHeight, midY + y)),
+      ]);
+      const conflicts = ([x, y]) => obstacles.filter(([otherX, otherY, width, height]) =>
+        Math.abs(x - otherX) < halfWidth + width && Math.abs(y - otherY) < halfHeight + height,
+      ).length;
+      const [x, y] = candidates.reduce((best, candidate) => conflicts(candidate) < conflicts(best) ? candidate : best);
+      obstacles.push([x, y, halfWidth, halfHeight]);
+
+      const label = labels[key];
+      label.text.setAttribute('x', x);
+      label.text.setAttribute('y', y);
+      if (label.text.textContent !== values[key]) label.text.textContent = values[key];
+
+      const shiftX = x - midX;
+      const shiftY = y - midY;
+      const distance = Math.hypot(shiftX, shiftY);
+      const start = Math.min(1, 6 / distance);
+      const end = 1 - 1 / Math.max(Math.abs(shiftX) / halfWidth, Math.abs(shiftY) / halfHeight);
+      const path = end > start
+        ? `M${midX + start * shiftX},${midY + start * shiftY}L${midX + end * shiftX},${midY + end * shiftY}`
+        : '';
+      label.stem.setAttribute('d', path);
+    }
+  }
+
+  function drawLabels(bounds, { points, lengths }, values) {
+    const circles = points.map(({ vertex }) => {
+      const style = getComputedStyle(vertex);
+      return { x: parseFloat(style.cx), y: parseFloat(style.cy) };
+    });
+    if (!circles.every(point => Number.isFinite(point.x) && Number.isFinite(point.y))) return;
+    const occupied = drawPointLabels(bounds, points, circles);
+    if (lengths && values) drawLengthLabels(bounds, lengths, values, circles, occupied);
   }
 
   function createTimelineRenderer(svg) {
@@ -95,15 +159,15 @@ const svgStage = (() => {
     return time => svg.setCurrentTime(time);
   }
 
-  function mount(stage, template, createRenderer = createTimelineRenderer) {
+  function mount(stage, template, { createRenderer = createTimelineRenderer, showLengths = false } = {}) {
     const svg = template.content.querySelector('svg').cloneNode(true);
-    const labels = addLabels(svg);
+    const labels = addLabels(svg, showLengths);
     stage.replaceChildren(svg);
     const draw = createRenderer(svg);
 
-    return frame => {
+    return (frame, values) => {
       draw(frame);
-      if (labels.length) drawLabels(svg.viewBox.baseVal, labels);
+      if (labels.points.length) drawLabels(svg.viewBox.baseVal, labels, values);
     };
   }
 

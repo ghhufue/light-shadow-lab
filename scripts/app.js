@@ -42,22 +42,23 @@
   function render() {
     const { key, scene, state, indicators, draw } = activeScene;
     const value = state.value;
+    let frame = state.time;
     let status;
     let lengths;
+    let lengthLabels;
     if (key === 'walk') {
-      draw?.(state.time);
       dial.textContent = `${formatNumber(value)} u`;
       status = Math.abs(value) < 0.005 ? 1 : value < 0 ? 0 : 2;
     } else {
       if (scene.light) {
         lengths = sceneMotion.rodProjection(value, state.lightX);
-        draw?.(lengths);
+        frame = lengths;
         lightSlider.value = String(state.lightX);
         lightDial.textContent = `${formatNumber(state.lightX)} u`;
         lightSlider.setAttribute('aria-valuetext', lightDial.textContent);
       } else {
         // The pre-rendered rotation SVGs use 10 seconds for the full slider range.
-        draw?.(Math.min(9.999999, value / scene.limit * 10));
+        frame = Math.min(9.999999, value / scene.limit * 10);
         lengths = sceneMotion.projection(key, value);
         const relative = lengths.projected / lengths.original;
         status = relative < 1e-6 ? 3 : Math.abs(relative - 1) < 1e-6 ? 1 : relative > 1 ? 0 : 2;
@@ -65,9 +66,14 @@
       dial.textContent = `${value.toFixed(1)}°`;
     }
     if (scene.showLengths) {
-      bodyLength.textContent = `${formatNumber(lengths.original)} u`;
-      shadowLength.textContent = `${formatNumber(lengths.projected)} u`;
+      lengthLabels = {
+        rod: `${formatNumber(lengths.original)} u`,
+        shadow: `${formatNumber(lengths.projected)} u`,
+      };
+      bodyLength.textContent = lengthLabels.rod;
+      shadowLength.textContent = lengthLabels.shadow;
     }
+    draw?.(frame, lengthLabels);
     slider.value = String(value);
     slider.setAttribute('aria-valuetext', dial.textContent);
     for (const [index, indicator] of indicators.entries()) {
@@ -156,7 +162,10 @@
     try {
       const template = await svgStage.load(key);
       if (view !== activeScene) return;
-      view.draw = svgStage.mount(stage, template, scene.light ? createMovingLightRenderer : undefined);
+      view.draw = svgStage.mount(stage, template, {
+        createRenderer: scene.light ? createMovingLightRenderer : undefined,
+        showLengths: scene.showLengths,
+      });
       setStageStatus('');
       render();
       schedulePlayback();
